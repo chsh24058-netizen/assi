@@ -240,7 +240,6 @@ export default function EnemyDisplay({ addHp = 1, attackPower = 1, onAttack, onG
         </div>
         <div style={{ marginTop: 3}}>
           <small>{enemy.name} : {enemy.kill}</small>
-          <small>: {maxIndex}</small>
         </div>
       </div>
       {isBossUnlocked && !isBossBattle && (

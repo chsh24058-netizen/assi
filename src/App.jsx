@@ -27,7 +27,7 @@ export default function App() {
          天気名例：Clear, Clouds, Rain, Snow, Thunderstorm
   ====================================== */
   const fetchWeather = async () => {
-    const API_KEY = "bdc099267294b6c80bfd5ce6b3ce75c6";
+    const API_KEY = "xxxxxxxx";
     const API_URL =`https://api.openweathermap.org/data/2.5/weather?q=Tokyo&appid=${API_KEY}&lang=ja&units=metric`;
 
 

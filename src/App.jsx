@@ -23,21 +23,22 @@ export default function App() {
   const [weather, setWeather] = useState("Clear");
 
   /* ======================================
-      ■ 天気取得
+      ■ 天気取得（Netlify Functions経由）
+      ※ APIキーはサーバ側に置く（フロントには置かない）
   ====================================== */
   const fetchWeather = async () => {
-<<<<<<< HEAD
-=======
-    const API_KEY = "xxxxxxxx";
-    const API_URL =`https://api.openweathermap.org/data/2.5/weather?q=Tokyo&appid=${API_KEY}&lang=ja&units=metric`;
-
-
->>>>>>> 0562ad588f02d11428713250a11b519602eb1b1d
     try {
       const res = await fetch("/.netlify/functions/weather");
+
+      // 失敗した時に落ちないようにする
+      if (!res.ok) {
+        console.error("天気APIエラー: status", res.status);
+        return;
+      }
+
       const data = await res.json();
 
-      if (data.weather && data.weather.length > 0) {
+      if (data?.weather?.length > 0) {
         setWeather(data.weather[0].main);
       }
     } catch (err) {
@@ -55,7 +56,6 @@ export default function App() {
     try {
       const data = JSON.parse(raw);
 
-      // ★欠けてても落ちないようにデフォルトを用意
       setStats(data.stats ?? { str: 0, crt: 0, hp: 0 });
       setLevel(data.level ?? 1);
       setExp(data.exp ?? 0);
@@ -76,7 +76,6 @@ export default function App() {
     const loadedPlayer = loadGameSilent();
     const hasEnemySave = !!localStorage.getItem("weatherRPG_enemySave");
 
-    // ★プレイヤー or 敵のどちらかにセーブがあれば EnemyDisplay にロード命令
     if (loadedPlayer || hasEnemySave) {
       setLoadCount((c) => c + 1);
     }
@@ -84,25 +83,35 @@ export default function App() {
     fetchWeather();
     const interval = setInterval(fetchWeather, 600000); // 10分
     return () => clearInterval(interval);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   /* ======================================
       ■ 経験値追加処理
+      ※ level/points の参照ズレを防ぐため関数型更新にする
   ====================================== */
   const gainExp = (amount = 20) => {
-    setExp((prev) => {
-      let newExp = prev + amount;
-      let newLevel = level;
-      let newPoints = points;
+    setExp((prevExp) => {
+      let newExp = prevExp + amount;
 
-      while (newExp >= newLevel * 10) {
-        newExp -= newLevel * 10;
-        newLevel += 1;
-        newPoints += 1;
-      }
+      // level/points は最新値が必要なので、ここでまとめて更新する
+      setLevel((prevLevel) => {
+        let lv = prevLevel;
 
-      setLevel(newLevel);
-      setPoints(newPoints);
+        setPoints((prevPoints) => {
+          let pt = prevPoints;
+
+          while (newExp >= lv * 10) {
+            newExp -= lv * 10;
+            lv += 1;
+            pt += 1;
+          }
+
+          return pt;
+        });
+
+        return lv;
+      });
 
       return newExp;
     });
@@ -117,6 +126,9 @@ export default function App() {
     setPoints((prev) => prev - 1);
   };
 
+  /* ======================================
+      ■ 攻撃処理
+  ====================================== */
   const attackEnemy = () => {
     const baseDamage = 1 + stats.str;
     const isCritical = Math.random() < (stats.crt + 1) / 100;
@@ -131,7 +143,7 @@ export default function App() {
     const data = { stats, level, exp, points };
     localStorage.setItem("weatherRPGsave", JSON.stringify(data));
 
-    setSaveCount((c) => c + 1); // ★EnemyDisplayにもセーブ命令
+    setSaveCount((c) => c + 1); // EnemyDisplayにもセーブ命令
     alert("セーブしました！");
   };
 
@@ -145,7 +157,7 @@ export default function App() {
       return;
     }
 
-    setLoadCount((c) => c + 1); // ★EnemyDisplayにもロード命令
+    setLoadCount((c) => c + 1); // EnemyDisplayにもロード命令
     alert("ロードしました！");
   };
 
@@ -162,7 +174,7 @@ export default function App() {
     setExp(0);
     setPoints(0);
 
-    setResetCount((c) => c + 1); // ★EnemyDisplayは resetCount で敵保存も消す
+    setResetCount((c) => c + 1); // EnemyDisplayは resetCount で敵保存も消す
     alert("リセットしました！");
   };
 

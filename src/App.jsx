@@ -26,6 +26,13 @@ export default function App() {
       ■ 天気取得
   ====================================== */
   const fetchWeather = async () => {
+<<<<<<< HEAD
+=======
+    const API_KEY = "xxxxxxxx";
+    const API_URL =`https://api.openweathermap.org/data/2.5/weather?q=Tokyo&appid=${API_KEY}&lang=ja&units=metric`;
+
+
+>>>>>>> 0562ad588f02d11428713250a11b519602eb1b1d
     try {
       const res = await fetch("/.netlify/functions/weather");
       const data = await res.json();

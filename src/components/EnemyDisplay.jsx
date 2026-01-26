@@ -367,10 +367,9 @@ export default function EnemyDisplay({
         <div style={{ marginTop: 12, color: "#555" }}>
           <small>攻撃力: {attackPower} （クリックで攻撃）</small>
         </div>
-        <div style={{ marginTop: 3 }}>
-          <small>
-            {enemy.name} : {enemy.kill}
-          </small>
+        <div style={{ marginTop: 3}}>
+          <small>{enemy.name} : {enemy.kill}</small>
+          <small>: {maxIndex}</small>
         </div>
       </div>
 

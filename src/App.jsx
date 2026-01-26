@@ -3,41 +3,35 @@ import StatsPanel from "./components/StatsPanel";
 import EnemyDisplay from "./components/EnemyDisplay";
 
 export default function App() {
-
   /* ======================================
       ■ プレイヤーステータス
   ====================================== */
   const [stats, setStats] = useState({ str: 0, crt: 0, hp: 0 });
-  
   const [level, setLevel] = useState(1);
   const [exp, setExp] = useState(0);
   const [points, setPoints] = useState(0);
-  const [resetCount, setResetCount] = useState(0);
 
+  const [resetCount, setResetCount] = useState(0);
+  const [saveCount, setSaveCount] = useState(0);
+  const [loadCount, setLoadCount] = useState(0);
 
   const expToNext = level * 10;
 
   /* ======================================
       ■ 天気の状態（Clear / Rain / Clouds…）
   ====================================== */
-  const [weather, setWeather] = useState("Clear"); // 初期値：晴れ
+  const [weather, setWeather] = useState("Clear");
 
   /* ======================================
-      ■ 天気を取得する関数（OpenWeatherMap）
-         天気名例：Clear, Clouds, Rain, Snow, Thunderstorm
+      ■ 天気取得
   ====================================== */
   const fetchWeather = async () => {
-    const API_KEY = "bdc099267294b6c80bfd5ce6b3ce75c6";
-    const API_URL =`https://api.openweathermap.org/data/2.5/weather?q=Tokyo&appid=${API_KEY}&lang=ja&units=metric`;
-
-
     try {
-      const res = await fetch(API_URL);
+      const res = await fetch("/.netlify/functions/weather");
       const data = await res.json();
 
       if (data.weather && data.weather.length > 0) {
-        const mainWeather = data.weather[0].main;
-        setWeather(mainWeather);
+        setWeather(data.weather[0].main);
       }
     } catch (err) {
       console.error("天気APIエラー:", err);
@@ -45,11 +39,42 @@ export default function App() {
   };
 
   /* ======================================
-      ■ マウント時＋60秒ごとに天気更新
+      ■ セーブデータ読み込み（自動用：alertなし）
+  ====================================== */
+  const loadGameSilent = () => {
+    const raw = localStorage.getItem("weatherRPGsave");
+    if (!raw) return false;
+
+    try {
+      const data = JSON.parse(raw);
+
+      // ★欠けてても落ちないようにデフォルトを用意
+      setStats(data.stats ?? { str: 0, crt: 0, hp: 0 });
+      setLevel(data.level ?? 1);
+      setExp(data.exp ?? 0);
+      setPoints(data.points ?? 0);
+
+      return true;
+    } catch (e) {
+      console.error("save load error:", e);
+      return false;
+    }
+  };
+
+  /* ======================================
+      ■ マウント時：自動ロード（プレイヤー＋敵） + 天気取得
+      ★敵だけ保存されているケースも拾う
   ====================================== */
   useEffect(() => {
-    fetchWeather(); // 最初に実行
+    const loadedPlayer = loadGameSilent();
+    const hasEnemySave = !!localStorage.getItem("weatherRPG_enemySave");
 
+    // ★プレイヤー or 敵のどちらかにセーブがあれば EnemyDisplay にロード命令
+    if (loadedPlayer || hasEnemySave) {
+      setLoadCount((c) => c + 1);
+    }
+
+    fetchWeather();
     const interval = setInterval(fetchWeather, 600000); // 10分
     return () => clearInterval(interval);
   }, []);
@@ -58,12 +83,11 @@ export default function App() {
       ■ 経験値追加処理
   ====================================== */
   const gainExp = (amount = 20) => {
-    setExp(prev => {
+    setExp((prev) => {
       let newExp = prev + amount;
       let newLevel = level;
       let newPoints = points;
 
-      // レベルアップ処理（何レベル分でも対応）
       while (newExp >= newLevel * 10) {
         newExp -= newLevel * 10;
         newLevel += 1;
@@ -82,53 +106,39 @@ export default function App() {
   ====================================== */
   const upgradeStat = (key) => {
     if (points <= 0) return;
-    setStats(prev => ({ ...prev, [key]: prev[key] + 1 }));
-    setPoints(prev => prev - 1);
+    setStats((prev) => ({ ...prev, [key]: prev[key] + 1 }));
+    setPoints((prev) => prev - 1);
   };
 
   const attackEnemy = () => {
     const baseDamage = 1 + stats.str;
-
     const isCritical = Math.random() < (stats.crt + 1) / 100;
     const damage = isCritical ? baseDamage * 2 : baseDamage;
-
-    return {
-      damage,
-      isCritical
-    };
+    return { damage, isCritical };
   };
 
-
   /* ======================================
-      ■ セーブデータ保存
+      ■ セーブデータ保存（プレイヤー＋敵）
   ====================================== */
   const saveGame = () => {
-    const data = {
-      stats,
-      level,
-      exp,
-      points
-    };
+    const data = { stats, level, exp, points };
     localStorage.setItem("weatherRPGsave", JSON.stringify(data));
+
+    setSaveCount((c) => c + 1); // ★EnemyDisplayにもセーブ命令
     alert("セーブしました！");
   };
 
   /* ======================================
-      ■ セーブデータ読み込み
+      ■ セーブデータ読み込み（プレイヤー＋敵）
   ====================================== */
   const loadGame = () => {
-    const saveData = localStorage.getItem("weatherRPGsave");
-    if (!saveData) {
+    const ok = loadGameSilent();
+    if (!ok) {
       alert("セーブデータがありません！");
       return;
     }
 
-    const data = JSON.parse(saveData);
-    setStats(data.stats);
-    setLevel(data.level);
-    setExp(data.exp);
-    setPoints(data.points);
-
+    setLoadCount((c) => c + 1); // ★EnemyDisplayにもロード命令
     alert("ロードしました！");
   };
 
@@ -137,6 +147,7 @@ export default function App() {
   ====================================== */
   const resetGame = () => {
     if (!confirm("本当にリセットしますか？")) return;
+
     localStorage.removeItem("weatherRPGsave");
 
     setStats({ str: 0, crt: 0, hp: 0 });
@@ -144,37 +155,32 @@ export default function App() {
     setExp(0);
     setPoints(0);
 
-    setResetCount(c => c + 1);
-
+    setResetCount((c) => c + 1); // ★EnemyDisplayは resetCount で敵保存も消す
     alert("リセットしました！");
   };
 
-
   /* ======================================
-      ■ JSX（表示部分）
+      ■ JSX
   ====================================== */
   return (
     <div style={{ display: "flex", minHeight: "100vh", fontFamily: "sans-serif" }}>
-      
-      {/* 左：ステータスパネル */}
       <StatsPanel stats={stats} points={points} onUpgrade={upgradeStat} />
 
-      {/* 右：ゲーム画面 */}
       <div style={{ padding: 24, flex: 1 }}>
         <h1>Weather RPG</h1>
 
-        <p><strong>現在の天気：</strong> {weather}</p>
+        <p>
+          <strong>現在の天気：</strong> {weather}
+        </p>
 
         <p>
-          <strong>Level:</strong> {level} |
-          <strong> EXP:</strong> {exp} / {expToNext}
+          <strong>Level:</strong> {level} | <strong>EXP:</strong> {exp} / {expToNext}
         </p>
 
         <p>
           <strong>攻撃力:</strong> {1 + stats.str}
         </p>
 
-        {/* ★ 天気を EnemyDisplay に渡す */}
         <EnemyDisplay
           addHp={stats.hp}
           attackPower={1 + stats.str}
@@ -182,12 +188,17 @@ export default function App() {
           onGainExp={gainExp}
           weather={weather}
           resetCount={resetCount}
+          saveCount={saveCount}
+          loadCount={loadCount}
         />
-        
 
         <div style={{ marginTop: 20 }}>
-          <button onClick={saveGame} style={{ marginRight: 10 }}>セーブ</button>
-          <button onClick={loadGame} style={{ marginRight: 10 }}>ロード</button>
+          <button onClick={saveGame} style={{ marginRight: 10 }}>
+            セーブ
+          </button>
+          <button onClick={loadGame} style={{ marginRight: 10 }}>
+            ロード
+          </button>
           <button onClick={resetGame}>リセット</button>
         </div>
       </div>

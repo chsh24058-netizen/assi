@@ -1,31 +1,6 @@
+// src/components/EnemyDisplay.jsx
 import { useEffect, useMemo, useState } from "react";
-
-const DEFAULT_ENEMY_SETS = {
-  Clear: [
-    { name: "ファイヤースライム", baseHp: 10, exp: 5, kill: 0, unlockKill: 10, unlock: 0 },
-    { name: "ヒートバット", baseHp: 50, exp: 20, kill: 0, unlockKill: 5, unlock: 0 },
-    { name: "フレアタイタン", baseHp: 100, exp: 100, kill: 0, unlockKill: 10, unlock: 0 },
-    { name: "インフェルノ", baseHp: 1000, exp: 1000, kill: 0 },
-  ],
-  Rain: [
-    { name: "ウォータースライム", baseHp: 15, exp: 7, kill: 0, unlockKill: 10, unlock: 0 },
-    { name: "アクアウルフ", baseHp: 60, exp: 30, kill: 0, unlockKill: 5, unlock: 0 },
-    { name: "ウォーターゴーレム", baseHp: 220, exp: 180, kill: 0, unlockKill: 10, unlock: 0 },
-    { name: "ポセイドン", baseHp: 1200, exp: 1000, kill: 0 },
-  ],
-  Clouds: [
-    { name: "クラウドバット", baseHp: 10, exp: 5, kill: 0, unlockKill: 10, unlock: 0 },
-    { name: "フォッグウルフ", baseHp: 80, exp: 30, kill: 0, unlockKill: 5, unlock: 0 },
-    { name: "ミストゴーレム", baseHp: 150, exp: 150, kill: 0, unlockKill: 10, unlock: 0 },
-    { name: "ファントム", baseHp: 1500, exp: 2000, kill: 0 },
-  ],
-  Thunderstorm: [
-    { name: "サンダーインプ", baseHp: 15, exp: 5, kill: 0, unlockKill: 10, unlock: 0 },
-    { name: "ライトニングウルフ", baseHp: 75, exp: 25, kill: 0, unlockKill: 10, unlock: 0 },
-    { name: "トールゴーレム", baseHp: 200, exp: 200, kill: 0, unlockKill: 10, unlock: 0 },
-    { name: "ゼウス", baseHp: 2000, exp: 2000, kill: 0 },
-  ],
-};
+import { useEnemySave } from "../hooks/useEnemySave";
 
 export default function EnemyDisplay({
   addHp = 1,
@@ -36,15 +11,12 @@ export default function EnemyDisplay({
   resetCount,
   saveCount,
   loadCount,
+  onEnemyDefeated,
+  onBossBattleChange = () => {},
 }) {
-  const ENEMY_SAVE_KEY = "weatherRPG_enemySave";
-
-  const [hydrated, setHydrated] = useState(false);
-  const [enemySets, setEnemySets] = useState(DEFAULT_ENEMY_SETS);
-
-  const enemyList = useMemo(() => enemySets[weather] || enemySets["Clear"], [enemySets, weather]);
-
   const [index, setIndex] = useState(0);
+
+  // ★「通常敵の解放数（ボス除外）」として扱う：最小1
   const [maxIndex, setMaxIndex] = useState(1);
 
   const [isCriticalHit, setIsCriticalHit] = useState(false);
@@ -53,146 +25,101 @@ export default function EnemyDisplay({
   const [playerTime, setPlayerTime] = useState(0);
   const [maxPlayerTime, setMaxPlayerTime] = useState(0);
 
-  // 「ボス勝利直後だけ、ボスHP=0を固定する」フラグ
   const [bossDefeatedHold, setBossDefeatedHold] = useState(false);
+
+  /* =========================
+      ■ スキル（必殺技）
+  ========================= */
+  const SKILL_COOLDOWN_MS = 10_000;
+  const SKILL_MULT = 5;
+
+  const [skillReadyAt, setSkillReadyAt] = useState(0);
+  const [nowMs, setNowMs] = useState(Date.now());
+
+  useEffect(() => {
+    const id = setInterval(() => setNowMs(Date.now()), 200);
+    return () => clearInterval(id);
+  }, []);
+
+  const skillRemainSec = Math.max(0, Math.ceil((skillReadyAt - nowMs) / 1000));
+  const canUseSkill = skillRemainSec === 0;
 
   const calcEnemyHp = (baseHp, kill) => Math.floor(baseHp * (1 + (kill ?? 0) * 0.1));
 
-  // boss判定（最後の要素がボス）
-  const isBoss = (e) => e && e === enemyList[enemyList.length - 1];
+  /* =========================
+      ■ セーブ/ロード（フック）
+  ========================= */
+  const safeIndex = Math.max(0, Math.min(index, 999999));
+
+  const { hydrated, enemySets, setEnemySets, saveNow } = useEnemySave({
+    weather,
+    safeIndex,
+    maxIndex,
+    isBossBattle,
+    playerTime,
+    maxPlayerTime,
+    bossDefeatedHold,
+    resetCount,
+    saveCount,
+    loadCount,
+    setIndex,
+    setMaxIndex,
+    setIsBossBattle,
+    setPlayerTime,
+    setMaxPlayerTime,
+    setBossDefeatedHold,
+  });
+
+  const enemyList = useMemo(() => enemySets[weather] || enemySets["Clear"], [enemySets, weather]);
+
+  const lastIdx = Math.max(0, enemyList.length - 1);
+  const bossIdx = lastIdx;
+
+  // ★安全なboss判定：indexで判断
+  const isBossIndex = (idx) => idx === bossIdx;
+
+  // ★通常敵（ボス除外）の数
+  const normalCount = Math.max(1, enemyList.length - 1);
 
   const isBossUnlocked = enemyList.slice(0, enemyList.length - 1).every((e) => e.unlock === 1);
 
-  // ✅ 天気が変わった時：ボス戦中は触らない。通常時は index リセット + maxIndexの上限も調整
+  /* =========================
+      ■ 天気変更時の調整（通常時のみ）
+  ========================= */
   useEffect(() => {
     if (isBossBattle) return;
 
     setIndex(0);
-    setMaxIndex((prev) => {
-      const maxAllowed = Math.max(1, enemyList.length - 1); // ボスは除外して解放
-      return Math.max(1, Math.min(prev, maxAllowed));
-    });
-  }, [weather, isBossBattle, enemyList.length]);
+    setMaxIndex((prev) => Math.max(1, Math.min(prev, normalCount)));
+  }, [weather, isBossBattle, normalCount]);
 
-  // ✅ index が範囲外になった時の保険（ロード直後/天気変更直後対策）
+  // indexが変になったら保険（ボス戦中は bossIdx も許可）
   useEffect(() => {
-    if (index < 0) setIndex(0);
-    if (index > enemyList.length - 1) setIndex(0);
-  }, [index, enemyList.length]);
+    const maxAllowedIndex = isBossBattle ? bossIdx : Math.max(0, maxIndex - 1);
+    if (index < 0 || index > maxAllowedIndex) setIndex(0);
+  }, [index, maxIndex, bossIdx, isBossBattle]);
 
-  const safeIndex = Math.max(0, Math.min(index, enemyList.length - 1));
-  const enemy = enemyList[safeIndex];
+  const clampedIndex = Math.max(0, Math.min(index, bossIdx));
+  const enemy = enemyList[clampedIndex];
 
   const maxHp = enemy ? calcEnemyHp(enemy.baseHp, enemy.kill) : 1;
   const [hp, setHp] = useState(() => (enemy ? calcEnemyHp(enemy.baseHp, enemy.kill) : 1));
 
-  // ✅ 敵が切り替わった時だけHPを満タンにする（hp依存は入れない）
-  // ✅ ただし「ボス勝利後で、まだボスを表示している間」は0を維持
   useEffect(() => {
     if (!enemy) return;
 
-    if (bossDefeatedHold && isBoss(enemy)) {
+    if (bossDefeatedHold && isBossIndex(clampedIndex)) {
       setHp(0);
       return;
     }
     setHp(calcEnemyHp(enemy.baseHp, enemy.kill));
-  }, [safeIndex, enemy, enemyList, bossDefeatedHold]); // hpは入れない
+  }, [clampedIndex, enemy, bossDefeatedHold]);
 
   /* =========================
-      ■ セーブ/ロード
+      ■ リセット時
   ========================= */
-  const saveEnemyData = (nextEnemySets = enemySets) => {
-    const data = {
-      enemySets: nextEnemySets,
-      index: safeIndex,
-      maxIndex,
-      isBossBattle,
-      playerTime,
-      maxPlayerTime,
-      bossDefeatedHold,
-    };
-    localStorage.setItem(ENEMY_SAVE_KEY, JSON.stringify(data));
-  };
-
-  const loadEnemyData = () => {
-    const raw = localStorage.getItem(ENEMY_SAVE_KEY);
-    if (!raw) return false;
-
-    try {
-      const data = JSON.parse(raw);
-
-      const loadedSets = data.enemySets || enemySets;
-      if (data.enemySets) setEnemySets(data.enemySets);
-
-      const list =
-        loadedSets?.[weather] ||
-        loadedSets?.["Clear"] ||
-        enemySets?.[weather] ||
-        enemySets?.["Clear"];
-
-      const safeMaxIndex = Math.max(1, Math.min(data.maxIndex ?? 1, list.length - 1));
-      const safeIndex2 = Math.max(0, Math.min(data.index ?? 0, list.length - 1));
-
-      setMaxIndex(safeMaxIndex);
-      setIndex(safeIndex2);
-
-      setIsBossBattle(!!data.isBossBattle);
-      setPlayerTime(Math.max(0, data.playerTime ?? 0));
-      setMaxPlayerTime(Math.max(0, data.maxPlayerTime ?? 0));
-      setBossDefeatedHold(!!data.bossDefeatedHold);
-
-      return true;
-    } catch (e) {
-      console.error("enemy load error:", e);
-      return false;
-    }
-  };
-
-  // 起動時ロード
-  useEffect(() => {
-    loadEnemyData();
-    setHydrated(true);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  // 自動セーブ
-  useEffect(() => {
-    if (!hydrated) return;
-    saveEnemyData();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hydrated, safeIndex, maxIndex, isBossBattle, playerTime, maxPlayerTime, bossDefeatedHold, enemySets]);
-
-  // App側セーブ
-  useEffect(() => {
-    if (!saveCount) return;
-    saveEnemyData();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [saveCount]);
-
-  // App側ロード
-  useEffect(() => {
-    if (!loadCount) return;
-    loadEnemyData();
-    setHydrated(true);
-  }, [loadCount]);
-
-  // リセット
   useEffect(() => {
     if (!resetCount) return;
-
-    localStorage.removeItem(ENEMY_SAVE_KEY);
-
-    setEnemySets((prev) => {
-      const newSets = {};
-      for (const key in prev) {
-        newSets[key] = prev[key].map((e) => ({
-          ...e,
-          kill: 0,
-          unlock: 0,
-        }));
-      }
-      return newSets;
-    });
 
     setIndex(0);
     setMaxIndex(1);
@@ -201,7 +128,7 @@ export default function EnemyDisplay({
     setMaxPlayerTime(0);
     setIsCriticalHit(false);
     setBossDefeatedHold(false);
-    setHydrated(true);
+    setSkillReadyAt(0);
   }, [resetCount]);
 
   /* =========================
@@ -215,13 +142,12 @@ export default function EnemyDisplay({
   };
 
   const startBossBattle = () => {
-    const bossIndex = enemyList.length - 1;
-    if (bossIndex < 0) return;
+    if (bossIdx < 0) return;
 
     setBossDefeatedHold(false);
 
     const timeLimit = 9 + addHp;
-    setIndex(bossIndex);
+    setIndex(bossIdx);
     setIsBossBattle(true);
     setPlayerTime(timeLimit);
     setMaxPlayerTime(timeLimit);
@@ -244,14 +170,21 @@ export default function EnemyDisplay({
     }
   }, [playerTime, isBossBattle]);
 
+  useEffect(() => {
+    onBossBattleChange(!!isBossBattle);
+  }, [isBossBattle, onBossBattleChange]);
+
   /* =========================
       ■ 攻撃
   ========================= */
-  const handleAttack = () => {
+  const handleAttack = (mult = 1) => {
     if (!enemy) return;
-    if (isBossBattle && !isBoss(enemy)) return;
 
-    const { damage, isCritical } = onAttack();
+    // ボス戦中はボス以外を殴れない
+    if (isBossBattle && !isBossIndex(clampedIndex)) return;
+
+    const result = onAttack?.(mult);
+    const { damage, isCritical } = result || { damage: 0, isCritical: false };
 
     if (isCritical) {
       setIsCriticalHit(true);
@@ -263,31 +196,30 @@ export default function EnemyDisplay({
 
     if (newHp !== 0) return;
 
+    // 撃破通知
+    onEnemyDefeated?.({ isBoss: isBossIndex(clampedIndex), enemyName: enemy.name, weather });
+
     const nextKill = (enemy.kill ?? 0) + 1;
     onGainExp(Math.floor(enemy.exp * (1 + (enemy.kill ?? 0) * 0.1)));
 
-    // ボス勝利：ボスのkillだけ増やす + HP=0固定
-    if (isBossBattle && isBoss(enemy)) {
+    // ===== ボス勝利 =====
+    if (isBossBattle && isBossIndex(clampedIndex)) {
       setBossDefeatedHold(true);
       setHp(0);
 
       setEnemySets((prev) => {
-        const nextList = (prev[weather] || prev["Clear"]).map((e, i) =>
-          i === safeIndex ? { ...e, kill: (e.kill ?? 0) + 1 } : e
-        );
-
+        const baseList = prev[weather] || prev["Clear"] || [];
+        const nextList = baseList.map((e, i) => (i === clampedIndex ? { ...e, kill: (e.kill ?? 0) + 1 } : e));
         const nextSets = { ...prev, [weather]: nextList };
 
-        const saveData = {
-          enemySets: nextSets,
-          index: safeIndex,
+        saveNow(nextSets, {
+          index: clampedIndex,
           maxIndex,
           isBossBattle,
           playerTime,
           maxPlayerTime,
           bossDefeatedHold: true,
-        };
-        localStorage.setItem(ENEMY_SAVE_KEY, JSON.stringify(saveData));
+        });
 
         return nextSets;
       });
@@ -299,10 +231,11 @@ export default function EnemyDisplay({
       return;
     }
 
-    // 通常敵：kill/unlock 更新 + 即保存
+    // ===== 通常敵 =====
     setEnemySets((prev) => {
-      const updatedWeatherList = (prev[weather] || prev["Clear"]).map((e, i) => {
-        if (i !== safeIndex) return e;
+      const baseList = prev[weather] || prev["Clear"] || [];
+      const updatedWeatherList = baseList.map((e, i) => {
+        if (i !== clampedIndex) return e;
 
         const nextUnlock = e.unlockKill
           ? nextKill >= e.unlockKill && e.unlock === 0
@@ -315,88 +248,192 @@ export default function EnemyDisplay({
 
       const nextSets = { ...prev, [weather]: updatedWeatherList };
 
-      const saveData = {
-        enemySets: nextSets,
-        index: safeIndex,
+      saveNow(nextSets, {
+        index: clampedIndex,
         maxIndex,
         isBossBattle,
         playerTime,
         maxPlayerTime,
         bossDefeatedHold,
-      };
-      localStorage.setItem(ENEMY_SAVE_KEY, JSON.stringify(saveData));
+      });
 
       return nextSets;
     });
 
-    // 次の敵へ
+    // 次の敵へ（通常敵の範囲で回す）
     setTimeout(() => {
-      if (isBoss(enemy)) {
-        setIsBossBattle(false);
-        setIndex(0);
-        return;
-      }
+      // 次に解放されるかチェック
+      const shouldUnlockNext =
+        nextKill >= (enemy.unlockKill ?? Infinity) && maxIndex < normalCount && enemy.unlock === 0;
 
-      if (nextKill >= (enemy.unlockKill ?? Infinity) && maxIndex < enemyList.length - 1 && enemy.unlock == 0) {
-        setMaxIndex((prev) => Math.min(prev + 1, enemyList.length - 1));
-        setIndex(maxIndex);
+      if (shouldUnlockNext) {
+        const newUnlockedCount = Math.min(maxIndex + 1, normalCount);
+        setMaxIndex(newUnlockedCount);
+        setIndex(newUnlockedCount - 1); // ★「新しく解放された敵」へ
       } else {
         setIndex((prev) => (prev + 1) % Math.max(1, maxIndex));
       }
     }, 200);
   };
 
+  const handleSkill = () => {
+    if (!canUseSkill) return;
+    setSkillReadyAt(Date.now() + SKILL_COOLDOWN_MS);
+    handleAttack(SKILL_MULT);
+  };
+
+  if (!hydrated && !enemy) {
+    return <div style={{ textAlign: "center", marginTop: 20 }}>Loading...</div>;
+  }
+
+  /* =========================
+      ■ 背景（通常/ボスで切替）
+      - 「今表示してる敵がボス」 または 「ボス戦中」はボス背景
+  ========================= */
+  const isBossNow = isBossIndex(clampedIndex) || isBossBattle;
+
+  // 天気の雰囲気（控えめ）
+  const weatherTint = (() => {
+    if (weather === "Rain") return "rgba(59,130,246,0.10)";
+    if (weather === "Clouds") return "rgba(107,114,128,0.10)";
+    if (weather === "Snow") return "rgba(148,163,184,0.12)";
+    if (weather === "Thunderstorm") return "rgba(168,85,247,0.10)";
+    return "rgba(16,185,129,0.06)"; // Clear等
+  })();
+
+  const cardBase = {
+    width: 260,
+    margin: "0 auto",
+    padding: 16,
+    borderRadius: 12,
+    boxShadow: isBossNow ? "0 0 18px rgba(168,85,247,0.45)" : "0 2px 6px rgba(0,0,0,0.15)",
+    transition: "background 0.15s, box-shadow 0.25s, border-color 0.25s",
+    cursor: "pointer",
+    userSelect: "none",
+    border: isBossNow ? "1px solid rgba(217,70,239,0.55)" : "1px solid rgba(0,0,0,0.06)",
+    overflow: "hidden",
+  };
+
+  const normalBg = `linear-gradient(135deg, rgba(255,255,255,0.96), ${weatherTint})`;
+  const bossBg = "linear-gradient(135deg, rgba(36,0,48,0.92), rgba(88,28,135,0.92))";
+
+  const cardBg = isCriticalHit
+    ? "linear-gradient(135deg, rgba(255,210,210,0.98), rgba(255,235,235,0.98))"
+    : isBossNow
+      ? bossBg
+      : normalBg;
+
+  const titleColor = isBossNow ? "#f5d0fe" : "#111827";
+  const subColor = isBossNow ? "rgba(245,208,254,0.85)" : "#555";
+
   return (
     <div style={{ textAlign: "center", marginTop: 20 }}>
       <div
         style={{
-          width: 260,
-          margin: "0 auto",
-          padding: 16,
-          borderRadius: 8,
-          boxShadow: "0 2px 6px rgba(0,0,0,0.15)",
-          background: isCriticalHit ? "#fbb8b8ff" : "#fff",
-          transition: "background 0.15s",
-          cursor: "pointer",
-          userSelect: "none",
+          ...cardBase,
+          background: cardBg,
         }}
-        onClick={handleAttack}
+        onClick={() => handleAttack(1)}
       >
-        <h3 style={{ margin: "6px 0" }}>
+        {/* バッジ（ボス/通常） */}
+        {isBossNow ? (
+          <div
+            style={{
+              display: "inline-block",
+              padding: "4px 10px",
+              borderRadius: 999,
+              fontSize: 12,
+              fontWeight: 800,
+              letterSpacing: 1.5,
+              color: "#fde68a",
+              background: "rgba(220,38,38,0.35)",
+              border: "1px solid rgba(250,204,21,0.45)",
+              marginBottom: 8,
+            }}
+          >
+            ⚠ BOSS ⚠
+          </div>
+        ) : (
+          <div style={{ fontSize: 12, color: "#6b7280", marginBottom: 8 }}>通常の敵</div>
+        )}
+
+        <h3 style={{ margin: "6px 0", color: titleColor }}>
           敵（{weather}）: {enemy ? enemy.name : "Loading..."}
         </h3>
 
-        <div style={{ height: 18, background: "#eee", borderRadius: 9, overflow: "hidden" }}>
+        {/* HPバー */}
+        <div style={{ height: 18, background: "rgba(0,0,0,0.10)", borderRadius: 9, overflow: "hidden" }}>
           <div
             style={{
               height: "100%",
               width: `${maxHp === 0 ? 0 : (hp / maxHp) * 100}%`,
-              background: "linear-gradient(90deg,#f66,#f00)",
+              background: isBossNow
+                ? "linear-gradient(90deg,#fbbf24,#ef4444)"
+                : "linear-gradient(90deg,#f66,#f00)",
               transition: "width 0.15s",
             }}
           />
         </div>
 
-        <div style={{ marginTop: 8 }}>
+        <div style={{ marginTop: 8, color: isBossNow ? "rgba(255,255,255,0.90)" : "#111827" }}>
           HP: {hp} / {maxHp}
         </div>
 
-        <div style={{ marginTop: 12, color: "#555" }}>
+        <div style={{ marginTop: 12, color: subColor }}>
           <small>攻撃力: {attackPower} （クリックで攻撃）</small>
         </div>
 
-        <div style={{ marginTop: 3 }}>
+        <div style={{ marginTop: 3, color: isBossNow ? "rgba(255,255,255,0.75)" : "#6b7280" }}>
           <small>{enemy ? `${enemy.name} : ${enemy.kill ?? 0}` : ""}</small>
-          <small> : {maxIndex}</small>
+        </div>
+
+        {/* 必殺技 */}
+        <div style={{ marginTop: 10, display: "flex", gap: 8, justifyContent: "center", alignItems: "center" }}>
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              handleSkill();
+            }}
+            disabled={!canUseSkill}
+            style={{
+              padding: "6px 10px",
+              borderRadius: 8,
+              border: isBossNow ? "1px solid rgba(245,208,254,0.45)" : "1px solid #999",
+              cursor: canUseSkill ? "pointer" : "not-allowed",
+              opacity: canUseSkill ? 1 : 0.6,
+              background: isBossNow ? "rgba(255,255,255,0.08)" : "white",
+              color: isBossNow ? "rgba(255,255,255,0.90)" : "#111827",
+            }}
+          >
+            必殺技 ×{SKILL_MULT}
+          </button>
+
+          <span style={{ fontSize: 12, color: isBossNow ? "rgba(255,255,255,0.75)" : "#555" }}>
+            {canUseSkill ? "使用可能" : `CT: ${skillRemainSec}s`}
+          </span>
         </div>
       </div>
 
+      {/* ボス挑戦ボタン */}
       {isBossUnlocked && !isBossBattle && (
-        <button onClick={startBossBattle} disabled={isBossBattle} style={{ background: "darkred", color: "white" }}>
+        <button
+          onClick={startBossBattle}
+          disabled={isBossBattle}
+          style={{
+            marginTop: 10,
+            padding: "8px 12px",
+            borderRadius: 10,
+            border: "1px solid rgba(127,29,29,0.45)",
+            background: "darkred",
+            color: "white",
+            cursor: "pointer",
+          }}
+        >
           ボスに挑戦
         </button>
       )}
 
+      {/* プレイヤーHP（ボス戦時） */}
       {isBossBattle && (
         <div style={{ width: 260, margin: "10px auto" }}>
           <div style={{ height: 10, background: "#444", borderRadius: 5, overflow: "hidden" }}>
